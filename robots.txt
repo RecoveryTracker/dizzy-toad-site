@@ -1,0 +1,4 @@
+# Dizzy Toad Woodworks — welcome, crawlers and shopping agents.
+# The catalog is meant to be found and indexed.
+User-agent: *
+Allow: /

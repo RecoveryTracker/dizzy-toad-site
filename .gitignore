@@ -1,0 +1,5 @@
+# Netlify CLI local state (machine-specific; the repo↔site link lives on Netlify)
+.netlify
+
+# macOS
+.DS_Store

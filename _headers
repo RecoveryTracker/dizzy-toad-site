@@ -1,0 +1,7 @@
+# Security headers — applied automatically when hosted on Netlify.
+# (Harmless on other hosts; they just ignore this file.)
+/*
+  X-Frame-Options: SAMEORIGIN
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=()
