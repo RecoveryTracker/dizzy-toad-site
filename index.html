@@ -645,8 +645,18 @@ function renderGallery(){
     var imgWrap=document.createElement('div'); imgWrap.className='piece-img-wrap';
     if(p.photos && p.photos.length){
       var img=document.createElement('img');
-      img.src=p.photos[0]; img.alt=p.name; img.loading='lazy';
-      img.onerror=function(){ var ph=document.createElement('div'); ph.className='piece-placeholder'; ph.textContent=catInfo(p.category).emoji; if(img.parentNode) img.parentNode.replaceChild(ph,img); };
+      img.alt=p.name; img.loading='lazy';
+      (function(im, src){
+        var tries=0;
+        im.onerror=function(){
+          // A re-render can abort an in-flight load — retry once before giving up.
+          if(tries++ < 1){ im.removeAttribute('src'); setTimeout(function(){ im.src=src; }, 150); return; }
+          var ph=document.createElement('div'); ph.className='piece-placeholder';
+          ph.textContent=catInfo(p.category).emoji;
+          if(im.parentNode) im.parentNode.replaceChild(ph,im);
+        };
+        im.src=src;
+      })(img, p.photos[0]);
       imgWrap.appendChild(img);
     } else {
       var ph=document.createElement('div'); ph.className='piece-placeholder';
@@ -1012,15 +1022,23 @@ function mapRow(r){
     photos:Array.isArray(r.photos)?r.photos:[], description:r.description||'',
     care:r.care||'', sort:(r.sort==null?0:r.sort) };
 }
+function catalogSig(arr){
+  try { return JSON.stringify((arr||[]).map(function(p){
+    return [p.id,p.name,p.category,p.species,p.dimensions,p.price,p.status,
+            (p.photos||[]).join('|'),p.description,p.care];
+  })); } catch(e){ return Math.random().toString(); }
+}
 function loadFromCloud(){
   if(!window.dtSupa) return Promise.resolve(false);
   return window.dtSupa.from('pieces').select('*').order('sort',{ascending:true})
     .then(function(res){
       if(res.error || !Array.isArray(res.data) || !res.data.length) return false;
-      pieces = res.data.map(mapRow);
+      var cloud = res.data.map(mapRow);
+      var changed = catalogSig(cloud) !== catalogSig(pieces);
+      pieces = cloud;
       clearLocalCache();          // cloud is authoritative; drop any old local cache
-      rerender();
-      return true;
+      if(changed) rerender();     // only rebuild the DOM if content actually differs
+      return true;                // (avoids a redundant re-render + image flash on load)
     })
     .catch(function(){ return false; });
 }
