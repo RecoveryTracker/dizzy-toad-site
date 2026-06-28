@@ -426,6 +426,20 @@ var CAT = {
 <!-- QR code generator (MIT; no-dependency; loaded before main script so it's ready when buildChrome runs) -->
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
 
+<!-- Supabase — live catalog + admin auth. The publishable key is PUBLIC by
+     design; row-level security (in the DB) is what protects writes. Loaded
+     before the main script and admin.js so the client is ready for both. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  window.DT_SUPA = {
+    url: 'https://xneelxyhhrkdqdbpcnwq.supabase.co',
+    key: 'sb_publishable_oGI9M2USjY96NkgEg4VX5g_s2b-YPap'
+  };
+  try { window.dtSupa = (window.supabase && window.supabase.createClient)
+        ? window.supabase.createClient(window.DT_SUPA.url, window.DT_SUPA.key)
+        : null; } catch(e){ window.dtSupa = null; }
+</script>
+
 <!-- ═══════════════════════════════════════════════════════════════════════
      JS
      ═══════════════════════════════════════════════════════════════════════ -->
@@ -988,6 +1002,29 @@ function buildStructuredData(){
 /* ── Re-render everything (used by the admin after edits) ───────────── */
 function rerender(){ buildFilters(); renderGallery(); buildStructuredData(); }
 
+/* ── Cloud catalog (Supabase) ────────────────────────────────────────
+   The page paints instantly from pieces.js (offline-safe), then swaps in
+   the live cloud catalog when it arrives. If the cloud is empty or
+   unreachable, the static catalog stays — the site never breaks. */
+function mapRow(r){
+  return { id:r.id, name:r.name, category:r.category, species:r.species,
+    dimensions:r.dimensions, price:Number(r.price)||0, status:r.status||'available',
+    photos:Array.isArray(r.photos)?r.photos:[], description:r.description||'',
+    care:r.care||'', sort:(r.sort==null?0:r.sort) };
+}
+function loadFromCloud(){
+  if(!window.dtSupa) return Promise.resolve(false);
+  return window.dtSupa.from('pieces').select('*').order('sort',{ascending:true})
+    .then(function(res){
+      if(res.error || !Array.isArray(res.data) || !res.data.length) return false;
+      pieces = res.data.map(mapRow);
+      clearLocalCache();          // cloud is authoritative; drop any old local cache
+      rerender();
+      return true;
+    })
+    .catch(function(){ return false; });
+}
+
 /* ── Admin API surface — admin.js drives the site through this ──────── */
 window.DT = {
   CONFIG: CONFIG, CAT: CAT,
@@ -997,6 +1034,9 @@ window.DT = {
   save: savePieces,
   discardLocalEdits: discardLocalEdits,
   storeKey: STORE_KEY,
+  supa: window.dtSupa,
+  refresh: loadFromCloud,
+  mapRow: mapRow,
   rerender: rerender,
   openLightbox: openLightbox,
   closeLightbox: closeLightbox,
@@ -1013,6 +1053,7 @@ buildFilters();
 renderGallery();
 buildStructuredData();
 checkFragment();
+loadFromCloud();                                          // upgrade to live cloud catalog
 if(window.DizzyToadAdmin) window.DizzyToadAdmin.init();   // admin.js, if loaded
 })();
 </script>

@@ -3,3 +3,6 @@
 
 # macOS
 .DS_Store
+
+# generated combo of schema.sql + seed.sql
+supabase/setup.sql

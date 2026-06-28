@@ -17,6 +17,7 @@ var DT = window.DT;
 var ADMIN_FLAG = 'dt_admin';
 var adminMode = false;
 var dirty = false;
+function supa(){ return DT.supa || window.dtSupa || null; }
 
 /* ── tiny DOM helpers ─────────────────────────────────────────────────── */
 function h(tag, attrs, kids){
@@ -95,27 +96,38 @@ function modal(node){
 function closeModal(){ if(openOverlay){ openOverlay.remove(); openOverlay=null; document.removeEventListener('keydown', escClose);} }
 function escClose(e){ if(e.key==='Escape') closeModal(); }
 
-/* ── login ───────────────────────────────────────────────────────────── */
+/* ── login (Supabase email + password) ───────────────────────────────── */
 function openLogin(){
-  var input=h('input',{type:'password', placeholder:'Password', autofocus:'true',
+  var email=h('input',{type:'email', placeholder:'you@example.com', autocomplete:'username'});
+  var pass=h('input',{type:'password', placeholder:'Password', autocomplete:'current-password',
     onkeydown:function(e){ if(e.key==='Enter') tryLogin(); }});
   var err=h('div',{class:'dt-err'});
+  var btn;
   function tryLogin(){
-    if(input.value === (DT.CONFIG.adminPassword||'')){ closeModal(); enterAdmin(); }
-    else { err.textContent='Sorry — that password didn’t match.'; input.value=''; input.focus(); }
+    var s=supa();
+    if(!s){ err.textContent='Sign-in is offline right now — try again in a moment.'; return; }
+    err.textContent='Signing in…'; if(btn) btn.disabled=true;
+    s.auth.signInWithPassword({ email:(email.value||'').trim(), password:pass.value })
+      .then(function(res){
+        if(btn) btn.disabled=false;
+        if(res.error){ err.textContent=res.error.message||'That didn’t work — check your email and password.'; pass.value=''; pass.focus(); return; }
+        closeModal(); enterAdmin();
+      })
+      .catch(function(){ if(btn) btn.disabled=false; err.textContent='Sign-in failed — check your connection.'; });
   }
+  btn=h('button',{class:'dt-btn dt-btn-primary', onclick:tryLogin, text:'Sign in'});
   var card=h('div',{class:'dt-card'},[
     h('h3',{text:'Admin sign-in'}),
-    h('div',{class:'dt-sub',text:'Manage your pieces — prices, photos, and what’s sold.'}),
-    h('div',{class:'dt-field'},[ h('label',{text:'Password'}), input ]),
+    h('div',{class:'dt-sub',text:'Sign in to manage your pieces. Changes go live instantly — no extra steps.'}),
+    field('Email', email),
+    field('Password', pass),
     err,
-    h('div',{class:'dt-actions'},[
-      h('button',{class:'dt-btn dt-btn-primary', onclick:tryLogin, text:'Sign in'}),
+    h('div',{class:'dt-actions'},[ btn,
       h('button',{class:'dt-btn dt-btn-ghost', onclick:closeModal, text:'Cancel'})
     ])
   ]);
   modal(card);
-  setTimeout(function(){ input.focus(); }, 30);
+  setTimeout(function(){ email.focus(); }, 30);
 }
 
 function enterAdmin(){
@@ -126,6 +138,7 @@ function enterAdmin(){
   decorateCards();
 }
 function exitAdmin(){
+  var s=supa(); if(s){ try{ s.auth.signOut(); }catch(e){} }
   try{ localStorage.removeItem(ADMIN_FLAG); }catch(e){}
   adminMode=false;
   document.body.classList.remove('dt-on');
@@ -136,13 +149,11 @@ function exitAdmin(){
 /* ── toolbar ─────────────────────────────────────────────────────────── */
 function buildToolbar(){
   if($('.dt-toolbar')) return;
-  var dot=h('span',{class:'dt-dot'+(dirty?' on':'')});
-  var label=h('span',{class:'dt-tlabel'},[dot, h('span',{text:'Editing as admin'})]);
+  var dot=h('span',{class:'dt-dot on'});
+  var label=h('span',{class:'dt-tlabel'},[dot, h('span',{text:'Editing — changes save live'})]);
   var tb=h('div',{class:'dt-toolbar'},[
     label,
-    h('button',{class:'dt-tbtn', onclick:addPiece, text:'+ Add piece'}),
-    h('button',{class:'dt-tbtn go', onclick:publish, text:'Publish changes'}),
-    h('button',{class:'dt-tbtn', onclick:confirmDiscard, text:'Discard edits'}),
+    h('button',{class:'dt-tbtn go', onclick:addPiece, text:'+ Add piece'}),
     h('button',{class:'dt-tbtn', onclick:exitAdmin, text:'Log out'})
   ]);
   document.body.appendChild(tb);
@@ -182,8 +193,12 @@ function decorateCards(){
 }
 function quickToggle(id){
   var p=pieceById(id); if(!p) return;
-  p.status = (p.status==='available') ? 'sold' : 'available';
-  DT.save(); markDirty(); DT.rerender(); // rerender rebuilds cards; observer re-decorates
+  var s=supa(); if(!s){ alert('You appear to be offline — try again in a moment.'); return; }
+  var next = (p.status==='available') ? 'sold' : 'available';
+  s.from('pieces').update({status:next}).eq('id', p.id).then(function(res){
+    if(res.error){ alert('Could not update: '+res.error.message); return; }
+    DT.refresh();   // re-pull from cloud + re-render (observer re-decorates)
+  });
 }
 
 /* ── editor ──────────────────────────────────────────────────────────── */
@@ -229,14 +244,18 @@ function openEditor(piece, isNew){
   function addFiles(files){
     var arr=Array.prototype.slice.call(files||[]);
     if(!arr.length) return;
-    Promise.all(arr.map(function(f){ return fileToDataUrl(f,1200,0.82); })).then(function(urls){
+    if(!supa()){ alert('You appear to be offline — try again in a moment.'); return; }
+    var note=h('div',{class:'dt-sub',text:'Uploading photo'+(arr.length>1?'s':'')+'…'});
+    photoWrap.appendChild(note);
+    Promise.all(arr.map(uploadPhoto)).then(function(urls){
       urls.forEach(function(u){ if(u) draft.photos.push(u); });
       renderPhotos();
-    }).catch(function(){ alert('Sorry — one of those photos couldn’t be read.'); });
+    }).catch(function(){ if(note.parentNode) note.remove(); alert('Sorry — a photo failed to upload. Try again.'); });
   }
   renderPhotos();
 
   function save(){
+    var s=supa(); if(!s){ alert('You appear to be offline — try again in a moment.'); return; }
     draft.name=fName.value.trim()||'Untitled piece';
     draft.species=fSpecies.value.trim();
     draft.dimensions=fDims.value.trim();
@@ -245,23 +264,33 @@ function openEditor(piece, isNew){
     draft.status=fStatus.value;
     draft.description=fDesc.value.trim();
     draft.care=fCare.value.trim();
-    var list=DT.getPieces();
-    if(isNew){ list.push(draft); }
-    else {
-      for(var i=0;i<list.length;i++){ if(String(list[i].id)===String(draft.id)){ list[i]=draft; break; } }
+    if(isNew && draft.sort==null){
+      var sorts=DT.getPieces().map(function(p){ return Number(p.sort)||0; });
+      draft.sort=(sorts.length?Math.max.apply(null,sorts):0)+1;
     }
-    if(!DT.save()) alert('Heads up: this browser’s storage is full (probably too many photos). Publish soon, then Discard edits to free space.');
-    markDirty(); DT.rerender(); closeModal();
+    var row={ id:draft.id, name:draft.name, category:draft.category, species:draft.species,
+      dimensions:draft.dimensions, price:draft.price, status:draft.status,
+      photos:draft.photos||[], description:draft.description, care:draft.care, sort:draft.sort||0 };
+    saveBtn.disabled=true; saveBtn.textContent='Saving…';
+    s.from('pieces').upsert(row).then(function(res){
+      saveBtn.disabled=false; saveBtn.textContent=isNew?'Add piece':'Save changes';
+      if(res.error){ alert('Could not save: '+res.error.message); return; }
+      DT.refresh().then(function(){ closeModal(); });
+    });
   }
   function del(){
-    if(!confirm('Delete "'+(draft.name||'this piece')+'" from the catalog?')) return;
-    var list=DT.getPieces().filter(function(p){ return String(p.id)!==String(draft.id); });
-    DT.setPieces(list); DT.save(); markDirty(); DT.rerender(); closeModal();
+    var s=supa(); if(!s){ alert('You appear to be offline — try again in a moment.'); return; }
+    if(!confirm('Delete "'+(draft.name||'this piece')+'" from the catalog? This is permanent.')) return;
+    s.from('pieces').delete().eq('id', draft.id).then(function(res){
+      if(res.error){ alert('Could not delete: '+res.error.message); return; }
+      DT.refresh().then(function(){ closeModal(); });
+    });
   }
 
+  var saveBtn=h('button',{class:'dt-btn dt-btn-primary', onclick:save, text: isNew?'Add piece':'Save changes'});
   var card=h('div',{class:'dt-card'},[
     h('h3',{text: isNew?'Add a piece':'Edit piece'}),
-    h('div',{class:'dt-sub',text:'Changes save to this device right away. Hit Publish when you’re ready to update the live site.'}),
+    h('div',{class:'dt-sub',text:'Changes go live on the website instantly when you save.'}),
     field('Name', fName),
     h('div',{class:'dt-row'},[ field('Type', fCat), field('Status', fStatus) ]),
     h('div',{class:'dt-row'},[ field('Wood / species', fSpecies), field('Size', fDims) ]),
@@ -269,8 +298,7 @@ function openEditor(piece, isNew){
     field('Description (your words)', fDesc),
     field('Care instructions', fCare),
     h('div',{class:'dt-field'},[ h('label',{text:'Photos — first one is the cover'}), photoWrap ]),
-    h('div',{class:'dt-actions'},[
-      h('button',{class:'dt-btn dt-btn-primary', onclick:save, text: isNew?'Add piece':'Save changes'}),
+    h('div',{class:'dt-actions'},[ saveBtn,
       h('button',{class:'dt-btn dt-btn-ghost', onclick:closeModal, text:'Cancel'}),
       isNew? null : h('button',{class:'dt-btn dt-btn-danger', onclick:del, text:'Delete'})
     ])
@@ -285,7 +313,40 @@ function addPiece(){
     status:'available', photos:[], description:'', care:'' }, true);
 }
 
-/* ── photo downscale ─────────────────────────────────────────────────── */
+/* ── photo upload (downscale → Supabase Storage → public URL) ────────── */
+function downscaleToBlob(file, maxDim, quality){
+  return new Promise(function(resolve,reject){
+    if(!file || !/^image\//.test(file.type)){ resolve(null); return; }
+    var img=new Image();
+    img.onload=function(){
+      var w=img.width, hh=img.height;
+      if(w>hh && w>maxDim){ hh=Math.round(hh*maxDim/w); w=maxDim; }
+      else if(hh>=w && hh>maxDim){ w=Math.round(w*maxDim/hh); hh=maxDim; }
+      var c=document.createElement('canvas'); c.width=w; c.height=hh;
+      c.getContext('2d').drawImage(img,0,0,w,hh);
+      c.toBlob(function(b){ b?resolve(b):reject(new Error('encode failed')); }, 'image/jpeg', quality||0.82);
+    };
+    img.onerror=reject;
+    var r=new FileReader();
+    r.onload=function(){ img.src=r.result; };
+    r.onerror=reject;
+    r.readAsDataURL(file);
+  });
+}
+function uploadPhoto(file){
+  var s=supa(); if(!s) return Promise.reject(new Error('offline'));
+  return downscaleToBlob(file,1200,0.82).then(function(blob){
+    if(!blob) return null;
+    var path='p'+Date.now()+'-'+Math.random().toString(36).slice(2,8)+'.jpg';
+    return s.storage.from('photos').upload(path, blob, {contentType:'image/jpeg', cacheControl:'31536000', upsert:false})
+      .then(function(res){
+        if(res.error) throw res.error;
+        return s.storage.from('photos').getPublicUrl(path).data.publicUrl;
+      });
+  });
+}
+
+/* ── legacy photo → data-URL (kept for reference; no longer used) ─────── */
 function fileToDataUrl(file, maxDim, quality){
   return new Promise(function(resolve,reject){
     if(!file || !/^image\//.test(file.type)){ resolve(null); return; }
@@ -341,9 +402,13 @@ function init(){
   injectStyles();
   document.body.appendChild(h('button',{class:'dt-trigger', onclick:function(){ adminMode?openManage():openLogin(); }, text:'🐸 Admin'}));
   watchGallery();
-  // stay logged in on this device
-  var logged=false; try{ logged=localStorage.getItem(ADMIN_FLAG)==='1'; }catch(e){}
-  if(logged) enterAdmin();
+  // resume an existing Supabase session (supabase-js persists it in localStorage)
+  var s=supa();
+  if(s){
+    s.auth.getSession().then(function(res){
+      if(res && res.data && res.data.session && !adminMode) enterAdmin();
+    }).catch(function(){});
+  }
   // allow #admin to open the login
   if((location.hash||'').toLowerCase()==='#admin' && !adminMode) openLogin();
 }
