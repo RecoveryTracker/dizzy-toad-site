@@ -96,6 +96,27 @@ function modal(node){
 function closeModal(){ if(openOverlay){ openOverlay.remove(); openOverlay=null; document.removeEventListener('keydown', escClose);} }
 function escClose(e){ if(e.key==='Escape') closeModal(); }
 
+/* ── styled danger confirm (stacks above the editor; matches the site) ── */
+function confirmDanger(opts){
+  var ov=h('div',{class:'dt-overlay', style:'z-index:600',
+    onclick:function(e){ if(e.target===ov) close(); }});
+  function close(){ ov.remove(); document.removeEventListener('keydown', onKey, true); }
+  function onKey(e){ if(e.key==='Escape'){ e.stopPropagation(); close(); } }
+  var card=h('div',{class:'dt-card'},[
+    h('h3',{text: opts.title || 'Are you sure?'}),
+    h('div',{class:'dt-sub'}, opts.bodyNodes || []),
+    h('div',{class:'dt-actions'},[
+      h('button',{class:'dt-btn dt-btn-ghost', onclick:close, text: opts.cancelText || 'Cancel'}),
+      h('button',{class:'dt-btn dt-btn-danger', onclick:function(){ close(); if(opts.onConfirm) opts.onConfirm(); },
+        text: opts.confirmText || 'Delete'})
+    ])
+  ]);
+  ov.appendChild(card);
+  document.body.appendChild(ov);
+  // capture-phase so this fires before the editor's own Escape handler
+  document.addEventListener('keydown', onKey, true);
+}
+
 /* ── login (Supabase email + password) ───────────────────────────────── */
 function openLogin(){
   var email=h('input',{type:'email', placeholder:'you@example.com', autocomplete:'username'});
@@ -280,10 +301,18 @@ function openEditor(piece, isNew){
   }
   function del(){
     var s=supa(); if(!s){ alert('You appear to be offline — try again in a moment.'); return; }
-    if(!confirm('Delete "'+(draft.name||'this piece')+'" from the catalog? This is permanent.')) return;
-    s.from('pieces').delete().eq('id', draft.id).then(function(res){
-      if(res.error){ alert('Could not delete: '+res.error.message); return; }
-      DT.refresh().then(function(){ closeModal(); });
+    confirmDanger({
+      title:'Delete this piece?',
+      bodyNodes:['This permanently removes ', h('b',{text:draft.name||'this piece'}),
+        ' from your catalog. This can’t be undone.'],
+      cancelText:'Keep it',
+      confirmText:'Yes, delete permanently',
+      onConfirm:function(){
+        s.from('pieces').delete().eq('id', draft.id).then(function(res){
+          if(res.error){ alert('Could not delete: '+res.error.message); return; }
+          DT.refresh().then(function(){ closeModal(); });
+        });
+      }
     });
   }
 
